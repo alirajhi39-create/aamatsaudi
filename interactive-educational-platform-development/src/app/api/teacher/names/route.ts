@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { lessonProgress, teacherNames } from "@/db/schema";
 import { error, json, preflight } from "@/lib/cors";
 import { isTeacherAuthorized } from "@/lib/teacher-auth";
+import { dbError, prepareDb } from "@/lib/db-errors";
 import { cleanDisplayName, normalizeClassName, normalizeNameKey } from "@/lib/normalize";
 import { deriveTeacherStudentId } from "@/lib/ids";
 import { FIXED_CLASS } from "@/lib/config";
@@ -18,6 +19,8 @@ export async function OPTIONS(req: NextRequest) {
 
 /** GET ?class=6/أ → roster for a class (public, used by the student login screen). No class → all (teacher). */
 export async function GET(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   const params = new URL(req.url).searchParams;
   const cls = params.get("class") ?? params.get("className");
   try {
@@ -51,12 +54,14 @@ export async function GET(req: NextRequest) {
       { req },
     );
   } catch (e) {
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }
 
 /** POST { className, names: string[] | string } → bulk register names (teacher). */
 export async function POST(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   if (!isTeacherAuthorized(req)) return error("UNAUTHORIZED", 401, req);
   let body: { className?: string; names?: string[] | string; locked?: boolean };
   try {
@@ -97,12 +102,14 @@ export async function POST(req: NextRequest) {
     const rows = await db.select().from(teacherNames).where(eq(teacherNames.className, className)).orderBy(asc(teacherNames.name));
     return json({ ok: true, class: className, inserted, skipped, names: rows.map(serializeTeacherName) }, { req, status: 201 });
   } catch (e) {
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }
 
 /** PATCH { studentId, name?, className?, locked? } (teacher). Also syncs lesson_progress. */
 export async function PATCH(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   if (!isTeacherAuthorized(req)) return error("UNAUTHORIZED", 401, req);
   let body: { studentId?: string; name?: string; className?: string; locked?: boolean };
   try {
@@ -128,14 +135,15 @@ export async function PATCH(req: NextRequest) {
       .where(eq(lessonProgress.studentId, studentId));
     return json({ ok: true, entry: serializeTeacherName(row) }, { req });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "SERVER_ERROR";
     if (isUniqueViolation(e)) return error("يوجد اسم مطابق في هذا الفصل — لا يمكن تكرار الاسم", 409, req);
-    return error(msg, 500, req);
+    return dbError(e, req);
   }
 }
 
 /** DELETE ?studentId= | ?class= | ?all=true (teacher). */
 export async function DELETE(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   if (!isTeacherAuthorized(req)) return error("UNAUTHORIZED", 401, req);
   const params = new URL(req.url).searchParams;
   const studentId = params.get("studentId")?.trim();
@@ -156,6 +164,6 @@ export async function DELETE(req: NextRequest) {
     }
     return error("حدد studentId أو class أو all=true", 400, req);
   } catch (e) {
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }

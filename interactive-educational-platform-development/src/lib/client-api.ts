@@ -39,6 +39,46 @@ export type LoginResult =
 const SESSION_KEY = "ssa2.student";
 const PIN_KEY = "ssa2.teacherPin";
 
+/** Error carrying the friendly message plus technical detail returned by the API. */
+export class ApiError extends Error {
+  code?: string;
+  detail?: string;
+  hint?: string;
+  status: number;
+  retry: boolean;
+  constructor(message: string, opts: { code?: string; detail?: string; hint?: string; status?: number; retry?: boolean } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.code = opts.code;
+    this.detail = opts.detail;
+    this.hint = opts.hint;
+    this.status = opts.status ?? 0;
+    this.retry = opts.retry ?? false;
+  }
+}
+
+type ErrorBody = { ok?: boolean; error?: string; code?: string; detail?: string; hint?: string; retry?: boolean };
+
+export function toApiError(res: Response | null, body: unknown, fallback: string): ApiError {
+  const b = (body ?? {}) as ErrorBody;
+  const offline = !res;
+  return new ApiError(offline ? "تعذر الاتصال بالخادم، تحقق من اتصالك بالإنترنت." : b.error || `${fallback} (HTTP ${res!.status})`, {
+    code: b.code ?? (offline ? "NETWORK" : undefined),
+    detail: b.detail,
+    hint: b.hint,
+    status: res?.status ?? 0,
+    retry: Boolean(b.retry) || offline,
+  });
+}
+
+async function readJson(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export function getSession(): StudentSession | null {
   if (typeof window === "undefined") return null;
   try {
@@ -60,16 +100,21 @@ export async function loginStudent(input: {
   studentId?: string;
   confirmResume?: boolean;
 }): Promise<LoginResult> {
-  const res = await fetch("/api/progress/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const data = (await res.json()) as (LoginResult & { error?: string }) | { ok: false; error?: string; existing?: TakenInfo };
-  if (res.status === 409) {
-    return { ok: false, code: "NAME_TAKEN", error: data.error ?? "هذا الاسم مسجل مسبقاً", existing: (data as { existing?: TakenInfo }).existing };
+  let res: Response;
+  try {
+    res = await fetch("/api/progress/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  } catch {
+    throw toApiError(null, null, "تعذر تسجيل الدخول");
   }
-  if (!res.ok || !data.ok) throw new Error(data.error || "تعذر تسجيل الدخول");
+  const data = (await readJson(res)) as (LoginResult & { error?: string }) | { ok: false; error?: string; existing?: TakenInfo } | null;
+  if (res.status === 409) {
+    return { ok: false, code: "NAME_TAKEN", error: data?.error ?? "هذا الاسم مسجل مسبقاً", existing: (data as { existing?: TakenInfo } | null)?.existing };
+  }
+  if (!res.ok || !data?.ok) throw toApiError(res, data, "تعذر تسجيل الدخول");
   return data as Extract<LoginResult, { ok: true }>;
 }
 
@@ -98,14 +143,19 @@ export type SavePayload = {
 };
 
 export async function saveProgressRemote(payload: SavePayload, keepalive = false) {
-  const res = await fetch("/api/progress", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    keepalive,
-  });
-  const data = (await res.json()) as { ok: boolean; error?: string; locked?: boolean; progress?: ProgressRecord };
-  if (!res.ok || !data.ok) throw new Error(data.error || "فشل الحفظ");
+  let res: Response;
+  try {
+    res = await fetch("/api/progress", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive,
+    });
+  } catch {
+    throw toApiError(null, null, "فشل الحفظ");
+  }
+  const data = (await readJson(res)) as { ok: boolean; error?: string; locked?: boolean; progress?: ProgressRecord } | null;
+  if (!res.ok || !data?.ok) throw toApiError(res, data, "فشل الحفظ");
   return data;
 }
 
@@ -125,17 +175,14 @@ export async function teacherFetch<T = unknown>(url: string, init: RequestInit =
   const headers = new Headers(init.headers);
   headers.set("X-Teacher-Pin", getTeacherPin());
   if (init.body && typeof init.body === "string" && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const res = await fetch(url, { ...init, headers, cache: "no-store" });
-  let data: unknown = null;
+  let res: Response;
   try {
-    data = await res.json();
+    res = await fetch(url, { ...init, headers, cache: "no-store" });
   } catch {
-    data = null;
+    throw toApiError(null, null, "فشل الطلب");
   }
-  if (!res.ok) {
-    const msg = (data as { error?: string } | null)?.error || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
+  const data = await readJson(res);
+  if (!res.ok) throw toApiError(res, data, "فشل الطلب");
   return data as T;
 }
 

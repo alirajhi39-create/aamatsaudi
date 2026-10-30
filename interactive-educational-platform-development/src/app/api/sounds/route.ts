@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { lessonSounds } from "@/db/schema";
 import { corsHeaders, error, json, preflight } from "@/lib/cors";
 import { isTeacherAuthorized } from "@/lib/teacher-auth";
+import { dbError, prepareDb } from "@/lib/db-errors";
 import { MAX_SOUND_BYTES, SOUND_KEY_PATTERN, isAllowedAudioMime } from "@/lib/sound-keys";
 
 export const dynamic = "force-dynamic";
@@ -47,6 +48,8 @@ function metaOf(row: {
 /* ------------------------------ GET (list / fetch) ------------------------------ */
 
 export async function GET(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   const params = new URL(req.url).searchParams;
   const key = normalizeKey(params.get("key"));
 
@@ -137,13 +140,15 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (e) {
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }
 
 /* --------------------------------- POST (upload) --------------------------------- */
 
 export async function POST(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   if (!isTeacherAuthorized(req)) return error("UNAUTHORIZED", 401, req);
 
   const declared = Number(req.headers.get("content-length") ?? 0);
@@ -207,13 +212,15 @@ export async function POST(req: NextRequest) {
 
     return json({ ok: true, sound: metaOf(row) }, { req, status: 201 });
   } catch (e) {
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }
 
 /* -------------------------------- DELETE (remove) -------------------------------- */
 
 export async function DELETE(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   if (!isTeacherAuthorized(req)) return error("UNAUTHORIZED", 401, req);
   const params = new URL(req.url).searchParams;
   const key = normalizeKey(params.get("key"));
@@ -226,6 +233,6 @@ export async function DELETE(req: NextRequest) {
     const deleted = await db.delete(lessonSounds).where(eq(lessonSounds.key, key)).returning({ key: lessonSounds.key });
     return json({ ok: true, deleted: deleted.length, key }, { req });
   } catch (e) {
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }

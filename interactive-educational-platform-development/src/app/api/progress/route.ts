@@ -1,9 +1,11 @@
 import { NextRequest } from "next/server";
 import { asc, eq, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { db, dbTarget } from "@/db";
+import { ensureSchema } from "@/db/ensure-schema";
 import { lessonProgress, lessonSounds, teacherNames } from "@/db/schema";
 import { corsHeaders, error, json, preflight } from "@/lib/cors";
 import { isTeacherAuthorized } from "@/lib/teacher-auth";
+import { dbError, describeDbError, prepareDb } from "@/lib/db-errors";
 import { cleanDisplayName, normalizeClassName, normalizeNameKey } from "@/lib/normalize";
 import {
   LESSON_ID,
@@ -28,13 +30,7 @@ export async function OPTIONS(req: NextRequest) {
 
 async function runDiagnostics(req: NextRequest) {
   const started = Date.now();
-  const dbUrl = process.env.DATABASE_URL ?? "";
-  let host: string | null = null;
-  try {
-    host = dbUrl ? new URL(dbUrl).host : null;
-  } catch {
-    host = "(unparseable)";
-  }
+  const problems: string[] = [];
 
   const report: Record<string, unknown> = {
     ok: true,
@@ -56,7 +52,19 @@ async function runDiagnostics(req: NextRequest) {
     cors: corsHeaders(req.headers.get("origin")),
   };
 
-  const database: Record<string, unknown> = { configured: Boolean(dbUrl), host, connected: false };
+  const database: Record<string, unknown> = {
+    configured: dbTarget.configured,
+    source: dbTarget.source,
+    host: dbTarget.host,
+    port: dbTarget.port,
+    name: dbTarget.database,
+    ssl: dbTarget.ssl,
+    pooler: dbTarget.pooler,
+    isLocalHost: dbTarget.isLocal,
+    connected: false,
+  };
+  if (!dbTarget.configured) problems.push("لم يتم ضبط DATABASE_URL على الخادم.");
+  else if (dbTarget.isLocal && dbTarget.serverless) problems.push("DATABASE_URL يشير إلى 127.0.0.1 — غير صالح على Vercel؛ استخدم رابط Neon.");
   try {
     const t0 = Date.now();
     const v = await db.execute(sql`select version() as version, now() as now, current_database() as db`);
@@ -68,9 +76,28 @@ async function runDiagnostics(req: NextRequest) {
     database.name = first.db ?? null;
   } catch (e) {
     report.ok = false;
-    database.error = e instanceof Error ? e.message : String(e);
+    const info = describeDbError(e);
+    database.error = info.message;
+    database.errorDetail = info.detail;
+    if (info.hint) database.hint = info.hint;
+    problems.push(`${info.message} ${info.hint ?? ""}`.trim());
   }
   report.database = database;
+
+  // Schema (auto-provisioning)
+  if (database.connected) {
+    try {
+      const status = await ensureSchema(true);
+      report.schema = status;
+      if (status.provisioned) problems.push("تم إنشاء/تحديث الجداول تلقائياً أثناء هذا الفحص.");
+      for (const w of status.warnings) problems.push(`تحذير مخطط: ${w}`);
+    } catch (e) {
+      report.ok = false;
+      const info = describeDbError(e);
+      report.schema = { ok: false, error: info.message, detail: info.detail };
+      problems.push(`${info.message} ${info.hint ?? ""}`.trim());
+    }
+  }
 
   const tables: Record<string, unknown> = {};
   if (database.connected) {
@@ -126,6 +153,8 @@ async function runDiagnostics(req: NextRequest) {
     }
   }
   report.tables = tables;
+  report.problems = problems;
+  report.summary = report.ok && problems.length === 0 ? "كل شيء يعمل بشكل سليم ✅" : problems[0] ?? "توجد مشكلة";
   report.durationMs = Date.now() - started;
   return json(report, { req, status: report.ok ? 200 : 503 });
 }
@@ -138,9 +167,12 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const params = url.searchParams;
 
+  // Diagnostics must work even when the database is misconfigured.
   if (params.get("diagnose") === "true" || params.get("diagnose") === "1") {
     return runDiagnostics(req);
   }
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
 
   try {
     const studentId = params.get("studentId")?.trim();
@@ -192,7 +224,7 @@ export async function GET(req: NextRequest) {
     };
     return json({ ok: true, class: normalized, classes, totalSlides: TOTAL_SLIDES, summary, students }, { req });
   } catch (e) {
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }
 
@@ -201,6 +233,8 @@ export async function GET(req: NextRequest) {
 /* -------------------------------------------------------------------------- */
 
 export async function POST(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;
@@ -225,7 +259,7 @@ export async function POST(req: NextRequest) {
     const msg = e instanceof Error ? e.message : "SERVER_ERROR";
     if (msg === "MISSING_IDENTITY") return error("يجب إدخال الاسم والفصل", 400, req, { code: msg });
     if (isUniqueViolation(e)) return error("هذا الاسم مسجل مسبقاً لطالب آخر في الفصل", 409, req, { code: "NAME_TAKEN" });
-    return error(msg, 500, req);
+    return dbError(e, req);
   }
 }
 
@@ -234,6 +268,8 @@ export async function POST(req: NextRequest) {
 /* -------------------------------------------------------------------------- */
 
 export async function PATCH(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   if (!isTeacherAuthorized(req)) return error("UNAUTHORIZED", 401, req);
   let body: Record<string, unknown>;
   try {
@@ -293,11 +329,10 @@ export async function PATCH(req: NextRequest) {
     const reg = await db.select({ locked: teacherNames.locked }).from(teacherNames).where(eq(teacherNames.studentId, studentId)).limit(1);
     return json({ ok: true, progress: serializeProgress(row), locked: Boolean(reg[0]?.locked) }, { req });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "SERVER_ERROR";
     if (isUniqueViolation(e)) {
       return error("يوجد طالب آخر بنفس الاسم في هذا الفصل — لا يمكن تكرار الاسم", 409, req, { code: "NAME_TAKEN" });
     }
-    return error(msg, 500, req);
+    return dbError(e, req);
   }
 }
 
@@ -306,6 +341,8 @@ export async function PATCH(req: NextRequest) {
 /* -------------------------------------------------------------------------- */
 
 export async function DELETE(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   if (!isTeacherAuthorized(req)) return error("UNAUTHORIZED", 401, req);
   const params = new URL(req.url).searchParams;
   const studentId = params.get("studentId")?.trim();
@@ -332,6 +369,6 @@ export async function DELETE(req: NextRequest) {
     }
     return error("حدد studentId أو class أو all=true", 400, req);
   } catch (e) {
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }

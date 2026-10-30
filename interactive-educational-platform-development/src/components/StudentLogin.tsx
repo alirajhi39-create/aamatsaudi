@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  ApiError,
   fetchRoster,
   formatDate,
   getSession,
@@ -23,6 +24,7 @@ export default function StudentLogin() {
   const [manual, setManual] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorInfo, setErrorInfo] = useState<{ detail?: string; hint?: string; code?: string; retry: boolean } | null>(null);
   const [existing, setExisting] = useState<StudentSession | null>(null);
   const [taken, setTaken] = useState<TakenInfo | null>(null);
 
@@ -38,6 +40,7 @@ export default function StudentLogin() {
 
   const submit = async (confirmResume = false) => {
     setError(null);
+    setErrorInfo(null);
     if (!valid) {
       setError("اكتب اسمك الثلاثي كاملاً (مثال: محمد أحمد العتيبي)");
       return;
@@ -55,7 +58,13 @@ export default function StudentLogin() {
       setSession(res.student);
       router.push("/lesson");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "حدث خطأ، حاول مرة أخرى");
+      if (err instanceof ApiError) {
+        setError(err.message);
+        setErrorInfo({ detail: err.detail, hint: err.hint, code: err.code, retry: err.retry });
+      } else {
+        setError(err instanceof Error ? err.message : "حدث خطأ، حاول مرة أخرى");
+        setErrorInfo({ retry: true });
+      }
     } finally {
       setBusy(false);
     }
@@ -157,7 +166,29 @@ export default function StudentLogin() {
             )}
           </div>
 
-          {error && <p className="rounded-2xl bg-rose-50 p-3 text-base font-bold leading-relaxed text-rose-700 ring-1 ring-rose-200">{error}</p>}
+          {error && (
+            <div className="rounded-2xl bg-rose-50 p-3 ring-1 ring-rose-200">
+              <p className="text-base font-bold leading-relaxed text-rose-700">⚠️ {error}</p>
+              {errorInfo?.hint && <p className="mt-1 text-sm leading-relaxed text-rose-800/80">💡 {errorInfo.hint}</p>}
+              {errorInfo?.retry && (
+                <button type="button" className="btn-secondary mt-2 py-2 text-sm" onClick={() => void submit(false)} disabled={busy}>
+                  🔄 إعادة المحاولة
+                </button>
+              )}
+              {errorInfo?.detail && (
+                <details className="mt-2 text-xs text-rose-900/70">
+                  <summary className="cursor-pointer select-none font-bold">تفاصيل تقنية للمعلم</summary>
+                  <p dir="ltr" className="mt-1 break-all rounded-lg bg-white/70 p-2 text-left font-mono">
+                    {errorInfo.code ? `[${errorInfo.code}] ` : ""}
+                    {errorInfo.detail}
+                  </p>
+                  <p className="mt-1">
+                    للفحص الكامل: <a className="underline" href="/api/progress?diagnose=true" target="_blank" rel="noreferrer">/api/progress?diagnose=true</a> — لإنشاء الجداول: <a className="underline" href="/api/setup" target="_blank" rel="noreferrer">/api/setup</a>
+                  </p>
+                </details>
+              )}
+            </div>
+          )}
 
           <button type="submit" className="btn-primary py-4 text-xl" disabled={busy || !trimmed}>
             {busy ? "لحظة..." : "ابدأ الدرس 🚀"}

@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { teacherNames } from "@/db/schema";
 import { error, json, preflight } from "@/lib/cors";
+import { dbError, prepareDb } from "@/lib/db-errors";
 import { FIXED_CLASS } from "@/lib/config";
 import { cleanDisplayName, normalizeNameKey } from "@/lib/normalize";
 import {
@@ -34,6 +35,8 @@ async function isLocked(studentId: string) {
  *    409 NAME_TAKEN; the client must send `confirmResume: true` to continue that record.
  */
 export async function POST(req: NextRequest) {
+  const notReady = await prepareDb(req);
+  if (notReady) return notReady;
   let body: Record<string, unknown>;
   try {
     body = (await req.json()) as Record<string, unknown>;
@@ -124,6 +127,6 @@ export async function POST(req: NextRequest) {
     if (isUniqueViolation(e)) {
       return json({ ok: false, code: "NAME_TAKEN", error: "هذا الاسم مسجل مسبقاً في الفصل" }, { req, status: 409 });
     }
-    return error(e instanceof Error ? e.message : "SERVER_ERROR", 500, req);
+    return dbError(e, req);
   }
 }
