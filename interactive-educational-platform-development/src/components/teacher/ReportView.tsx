@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LESSON_TITLE, QUIZ, SLIDES, TOTAL_SLIDES } from "@/lib/lesson-content";
 import { summarizeActivities } from "@/lib/activity-summary";
+import { allAttempts, attemptAsRecord, bestQuizPercent } from "@/lib/attempts";
 import { FIXED_CLASS, FIXED_CLASS_FULL, FIXED_CLASS_LABEL } from "@/lib/config";
 import { formatDate, getTeacherPin, type ProgressRecord } from "@/lib/client-api";
 import { cx } from "@/components/ui";
@@ -215,7 +216,21 @@ function ClassReport({ students }: { students: ProgressRecord[] }) {
                   <td className="px-2 py-1.5">
                     {doneCount(s)}/{TOTAL_SLIDES}
                   </td>
-                  <td className="px-2 py-1.5 font-bold">{qp === null ? "—" : `${s.quizScore}/${s.quizTotal} (${qp}%)`}</td>
+                  <td className="px-2 py-1.5 font-bold">
+                    {(() => {
+                      const at = allAttempts(s);
+                      if (at.length === 1) return qp === null ? "—" : `${s.quizScore}/${s.quizTotal} (${qp}%)`;
+                      return (
+                        <span className="flex flex-wrap gap-1">
+                          {at.map((a) => (
+                            <span key={a.round} className={cx("rounded-full px-1.5 py-0.5 text-[10px]", a.current ? "bg-saudi-light text-saudi" : "bg-sand text-ink/70")}>
+                              م{a.round}: {a.quizScore !== null && a.quizTotal ? `${a.quizScore}/${a.quizTotal}` : "—"}
+                            </span>
+                          ))}
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="px-2 py-1.5">
                     <span className="rounded-full px-2 py-0.5 text-[11px] font-bold" style={{ background: g.bg, color: g.color }}>
                       {g.label}
@@ -264,8 +279,8 @@ function StudentReport({ s, index }: { s: ProgressRecord; index: number }) {
   const quiz = act<{ answers?: Record<string, string>; history?: Array<{ score: number; total: number; at: string }> }>(s, "quiz");
   const hasQuizAnswers = quiz.answers && Object.keys(quiz.answers).length > 0;
   const summary = summarizeActivities(s);
-  const hist = (s.activities as Record<string, unknown> | undefined)?.__history;
-  const pastRuns = (Array.isArray(hist) ? hist : []) as Array<{ round: number; quizScore: number | null; quizTotal: number | null; completed: boolean }>;
+  const attempts = allAttempts(s);
+  const best = bestQuizPercent(s);
 
   return (
     <section className="report-sheet break-after-page rounded-3xl bg-white p-5 shadow-xl ring-1 ring-black/5 last:break-after-auto sm:p-7">
@@ -283,14 +298,49 @@ function StudentReport({ s, index }: { s: ProgressRecord; index: number }) {
         <p><b>صواب/خطأ:</b> {tf.score !== undefined ? `${tf.score}/${tf.total}` : "—"}</p>
         <p><b>أول دخول:</b> {formatDate(s.createdAt)}</p>
         <p className="col-span-2"><b>آخر دخول:</b> {formatDate(s.lastSeenAt)}</p>
-        {pastRuns.length > 0 && (
-          <p className="col-span-2 sm:col-span-4">
-            <b>🔁 محاولات سابقة ({pastRuns.length}):</b>{" "}
-            {pastRuns.map((r) => `المحاولة ${r.round}: ${r.quizScore !== null && r.quizTotal ? `${r.quizScore}/${r.quizTotal}` : "لم يختبر"}${r.completed ? " (مكتملة)" : ""}`).join(" — ")}
-            {" — "}الحالية: المحاولة {pastRuns.length + 1}
-          </p>
-        )}
       </div>
+
+      {attempts.length > 1 && (
+        <div className="mt-3 break-inside-avoid">
+          <h3 className="mb-1.5 font-heading text-base font-extrabold text-maroon">
+            🔁 مقارنة المحاولات ({attempts.length}) — أفضل نتيجة اختبار: {best === null ? "—" : `${best}%`}
+          </h3>
+          <div className="overflow-hidden rounded-xl ring-1 ring-black/10">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-maroon text-white">
+                  {["المحاولة", "التقدم", "الاختبار", "صواب/خطأ", "الأنشطة", "الحالة", "البداية", "النهاية"].map((h) => (
+                    <th key={h} className="px-2 py-1.5 text-start font-heading font-bold">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {attempts.map((a) => {
+                  const rec = attemptAsRecord(s, a);
+                  const p = a.quizScore !== null && a.quizTotal ? Math.round((a.quizScore / a.quizTotal) * 100) : null;
+                  const g2 = grade(p);
+                  const tf2 = act<{ score?: number; total?: number }>(rec, "truefalse");
+                  return (
+                    <tr key={a.round} className={cx("border-t border-black/5", a.current ? "bg-saudi-light/60" : "bg-white")}>
+                      <td className="px-2 py-1.5 font-bold">{a.round}{a.current ? " (الحالية)" : ""}</td>
+                      <td className="px-2 py-1.5">{pct(rec)}% (الشريحة {a.maxSlide + 1})</td>
+                      <td className="px-2 py-1.5">
+                        {p === null ? "لم يختبر" : <span className="rounded-full px-2 py-0.5 font-bold" style={{ background: g2.bg, color: g2.color }}>{a.quizScore}/{a.quizTotal} ({p}%) — {g2.label}</span>}
+                      </td>
+                      <td className="px-2 py-1.5">{tf2.score !== undefined ? `${tf2.score}/${tf2.total}` : "—"}</td>
+                      <td className="px-2 py-1.5">{doneCount(rec)}/{TOTAL_SLIDES}</td>
+                      <td className="px-2 py-1.5">{a.completed ? "🎓 مكتملة" : "⏳ غير مكتملة"}</td>
+                      <td className="px-2 py-1.5 text-[10px] text-ink/60">{formatDate(a.startedAt)}</td>
+                      <td className="px-2 py-1.5 text-[10px] text-ink/60">{a.finishedAt ? formatDate(a.finishedAt) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-1 text-[10px] text-ink/50">تفاصيل الأنشطة والاختبار أدناه تخص المحاولة الحالية؛ وتُحفظ إجابات المحاولات السابقة كاملة في قاعدة البيانات.</p>
+        </div>
+      )}
 
       <h3 className="mb-1.5 mt-4 font-heading text-base font-extrabold text-saudi">🗂️ خريطة إنجاز الأنشطة</h3>
       <div className="grid grid-cols-5 gap-1 sm:grid-cols-10">

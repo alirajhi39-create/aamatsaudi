@@ -46,10 +46,10 @@ export function McqCheck({
   const solved = chosen === answer;
   return (
     <div className="rounded-3xl bg-saudi-light/60 p-4 ring-1 ring-saudi/20 sm:p-5">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <h4 className="font-heading text-lg font-extrabold text-saudi">🤔 تحقق من فهمك: {question}</h4>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <h4 className="min-w-0 flex-1 basis-56 font-heading text-lg font-extrabold leading-relaxed text-saudi">🤔 تحقق من فهمك: {question}</h4>
         {hint && !solved && (
-          <button className="chip bg-gold-light text-amber-900 ring-1 ring-gold/40" onClick={() => setShowHint((s) => !s)}>
+          <button type="button" className="chip shrink-0 whitespace-nowrap bg-gold-light px-4 py-1.5 text-base text-amber-900 ring-1 ring-gold/40" onClick={() => setShowHint((s) => !s)}>
             💡 تلميح
           </button>
         )}

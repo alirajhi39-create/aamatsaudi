@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SLIDES, TOTAL_SLIDES } from "@/lib/lesson-content";
 import { summarizeActivities } from "@/lib/activity-summary";
+import { allAttempts, attemptAsRecord, bestQuizPercent, currentRound, type Attempt } from "@/lib/attempts";
 import { FIXED_CLASS, FIXED_CLASS_FULL, FIXED_CLASS_LABEL } from "@/lib/config";
 import { formatDate, getTeacherPin, setTeacherPin, teacherFetch, type ProgressRecord } from "@/lib/client-api";
 import { Modal, ProgressRing, cx, useToast } from "@/components/ui";
@@ -60,14 +61,6 @@ function pct(s: ProgressRecord) {
 function quizPct(s: ProgressRecord) {
   return s.quizScore !== null && s.quizTotal ? Math.round((s.quizScore / s.quizTotal) * 100) : null;
 }
-type PastRun = { round: number; finishedAt: string | null; restartedAt: string; quizScore: number | null; quizTotal: number | null; quizAttempts: number; completed: boolean; maxSlide: number };
-function pastRuns(s: ProgressRecord): PastRun[] {
-  const h = (s.activities as Record<string, unknown> | undefined)?.__history;
-  return Array.isArray(h) ? (h as PastRun[]) : [];
-}
-function rounds(s: ProgressRecord) {
-  return pastRuns(s).length + 1;
-}
 function doneCount(s: ProgressRecord) {
   return SLIDES.filter((sl) => (s.activities?.[sl.id] as { done?: boolean } | undefined)?.done).length;
 }
@@ -83,12 +76,31 @@ function toCsv(rows: ProgressRecord[]) {
   );
   return "\uFEFF" + [head.join(","), ...lines].join("\n");
 }
+function pctClass(p: number) {
+  return p >= 80 ? "bg-emerald-50 text-emerald-700" : p >= 60 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700";
+}
+/** Quiz results of every attempt, side by side (oldest → current). */
 function QuizChip({ s }: { s: ProgressRecord }) {
-  const qp = quizPct(s);
-  if (qp === null) return <span className="text-ink/40">لم يختبر</span>;
+  const attempts = allAttempts(s);
+  if (attempts.length === 1) {
+    const qp = quizPct(s);
+    if (qp === null) return <span className="text-ink/40">لم يختبر</span>;
+    return (
+      <span className={cx("chip", pctClass(qp))}>
+        {s.quizScore}/{s.quizTotal} ({qp}%) — {s.quizAttempts} محاولة
+      </span>
+    );
+  }
   return (
-    <span className={cx("chip", qp >= 80 ? "bg-emerald-50 text-emerald-700" : qp >= 60 ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-700")}>
-      {s.quizScore}/{s.quizTotal} ({qp}%) — {s.quizAttempts} محاولة
+    <span className="flex flex-wrap items-center gap-1">
+      {attempts.map((a) => {
+        const p = a.quizScore !== null && a.quizTotal ? Math.round((a.quizScore / a.quizTotal) * 100) : null;
+        return (
+          <span key={a.round} className={cx("chip", p === null ? "bg-sand text-ink/50" : pctClass(p), a.current && "ring-2 ring-saudi/40")} title={a.current ? "المحاولة الحالية" : `المحاولة ${a.round}`}>
+            م{a.round}: {p === null ? "—" : `${a.quizScore}/${a.quizTotal}`}
+          </span>
+        );
+      })}
     </span>
   );
 }
@@ -486,7 +498,7 @@ export default function TeacherDashboard() {
                               <div>
                                 <p className="text-base font-bold">
                                   {s.name} {s.locked && <span title="مثبت من المعلم">🔒</span>}
-                                  {rounds(s) > 1 && <span className="chip ms-1 bg-maroon-light text-maroon" title="عدد مرات بدء الدرس">🔁 المحاولة {rounds(s)}</span>}
+                                  {currentRound(s) > 1 && <span className="chip ms-1 bg-maroon-light text-maroon" title="عدد مرات بدء الدرس">🔁 المحاولة {currentRound(s)}</span>}
                                 </p>
                                 <p className="text-[11px] text-ink/40">{s.studentId}</p>
                               </div>
@@ -687,13 +699,68 @@ function DiagCard({ label, ok, value }: { label: string; ok: boolean; value: str
   );
 }
 
-function StudentDetail({ s }: { s: ProgressRecord }) {
+function AttemptsTable({ attempts }: { attempts: Attempt[] }) {
+  return (
+    <div className="overflow-x-auto rounded-2xl ring-1 ring-black/10">
+      <table className="w-full text-sm">
+        <thead className="bg-sand text-ink/70">
+          <tr>
+            {["المحاولة", "التقدم", "الاختبار", "محاولات الاختبار", "الحالة", "البداية", "النهاية"].map((h) => (
+              <th key={h} className="px-2 py-2 text-start font-heading font-bold">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {attempts.map((a) => {
+            const p = a.quizScore !== null && a.quizTotal ? Math.round((a.quizScore / a.quizTotal) * 100) : null;
+            return (
+              <tr key={a.round} className={cx("border-t border-black/5", a.current && "bg-saudi-light/50")}>
+                <td className="px-2 py-1.5 font-bold">
+                  {a.round} {a.current && <span className="chip bg-saudi text-white">الحالية</span>}
+                </td>
+                <td className="px-2 py-1.5">{Math.round(((a.maxSlide + 1) / TOTAL_SLIDES) * 100)}% (الشريحة {a.maxSlide + 1})</td>
+                <td className="px-2 py-1.5">{p === null ? <span className="text-ink/40">لم يختبر</span> : <span className={cx("chip", pctClass(p))}>{a.quizScore}/{a.quizTotal} ({p}%)</span>}</td>
+                <td className="px-2 py-1.5 text-center">{a.quizAttempts}</td>
+                <td className="px-2 py-1.5">{a.completed ? "🎓 مكتملة" : "⏳ غير مكتملة"}</td>
+                <td className="px-2 py-1.5 text-xs text-ink/60">{formatDate(a.startedAt)}</td>
+                <td className="px-2 py-1.5 text-xs text-ink/60">{a.finishedAt ? formatDate(a.finishedAt) : "—"}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StudentDetail({ s: full }: { s: ProgressRecord }) {
+  const attempts = allAttempts(full);
+  const [round, setRound] = useState(attempts.length);
+  const attempt = attempts[Math.min(round, attempts.length) - 1] ?? attempts[attempts.length - 1];
+  const s = attemptAsRecord(full, attempt);
   const tf = act<{ score?: number; total?: number }>(s, "truefalse");
   const quizHistory = (act<{ history?: Array<{ score: number; total: number; at: string }> }>(s, "quiz").history ?? []).slice(-5);
   const summary = summarizeActivities(s);
   const qp = quizPct(s);
+  const best = bestQuizPercent(full);
   return (
     <div className="grid gap-4 text-sm">
+      {attempts.length > 1 && (
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="font-heading font-extrabold text-maroon">🔁 المحاولات ({attempts.length}) — أفضل نتيجة اختبار: {best === null ? "—" : `${best}%`}</h4>
+            <div className="flex flex-wrap gap-1 rounded-2xl bg-sand p-1">
+              {attempts.map((a) => (
+                <button key={a.round} type="button" onClick={() => setRound(a.round)} className={cx("rounded-xl px-3 py-1.5 font-heading text-sm font-bold transition", round === a.round ? "bg-maroon text-white" : "text-ink/60 hover:bg-white")}>
+                  المحاولة {a.round}{a.current ? " (الحالية)" : ""}
+                </button>
+              ))}
+            </div>
+          </div>
+          <AttemptsTable attempts={attempts} />
+          <p className="text-xs text-ink/50">التفاصيل أدناه تخص المحاولة {attempt.round}{attempt.current ? " (الحالية)" : ""}؛ اختر محاولة أخرى من الأزرار أعلاه.</p>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-4 rounded-2xl bg-sand/60 p-3">
         <div className="relative">
           <ProgressRing percent={pct(s)} size={70} />
@@ -721,21 +788,6 @@ function StudentDetail({ s }: { s: ProgressRecord }) {
           })}
         </div>
       </div>
-      {pastRuns(s).length > 0 && (
-        <div>
-          <h4 className="mb-1 font-heading font-extrabold text-maroon">🔁 محاولات سابقة للدرس (أعاد الطالب الدرس {pastRuns(s).length} مرة)</h4>
-          <ul className="grid gap-1">
-            {pastRuns(s).map((r) => (
-              <li key={r.round} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-maroon-light/60 px-3 py-1.5 text-sm">
-                <span className="font-bold">المحاولة {r.round}</span>
-                <span>{r.quizScore !== null && r.quizTotal ? `الاختبار: ${r.quizScore}/${r.quizTotal} (${Math.round((r.quizScore / r.quizTotal) * 100)}%)` : "لم يختبر"}</span>
-                <span>{r.completed ? "أكملها 🎓" : `وصل للشريحة ${r.maxSlide + 1}`}</span>
-                <span className="text-xs text-ink/60">أعاد الدرس في {formatDate(r.restartedAt)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
       {quizHistory.length > 0 && (
         <div>
           <h4 className="mb-1 font-heading font-extrabold text-saudi">سجل محاولات الاختبار</h4>

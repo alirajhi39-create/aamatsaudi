@@ -64,12 +64,12 @@ export function Activity1Slide({ value, update, done, markDone }: SlideProps) {
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Part A — single choice */}
         <div className="card p-4 sm:p-5">
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <h4 className="font-heading text-lg font-extrabold text-maroon sm:text-xl">
+          <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+            <h4 className="min-w-0 flex-1 basis-56 font-heading text-lg font-extrabold leading-relaxed text-maroon sm:text-xl">
               {partA.label}- {partA.question}
             </h4>
             {!revealed && (
-              <button className="chip shrink-0 bg-gold-light text-amber-900 ring-1 ring-gold/40" onClick={() => setOpenHint(openHint === "a" ? null : "a")}>
+              <button type="button" className="chip shrink-0 whitespace-nowrap bg-gold-light px-4 py-1.5 text-base text-amber-900 ring-1 ring-gold/40" onClick={() => setOpenHint(openHint === "a" ? null : "a")}>
                 💡 تلميح
               </button>
             )}
@@ -101,12 +101,12 @@ export function Activity1Slide({ value, update, done, markDone }: SlideProps) {
 
         {/* Part B — pick two */}
         <div className="card p-4 sm:p-5">
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <h4 className="font-heading text-lg font-extrabold text-maroon sm:text-xl">
+          <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+            <h4 className="min-w-0 flex-1 basis-56 font-heading text-lg font-extrabold leading-relaxed text-maroon sm:text-xl">
               {partB.label}- {partB.question}
             </h4>
             {!revealed && (
-              <button className="chip shrink-0 bg-gold-light text-amber-900 ring-1 ring-gold/40" onClick={() => setOpenHint(openHint === "b" ? null : "b")}>
+              <button type="button" className="chip shrink-0 whitespace-nowrap bg-gold-light px-4 py-1.5 text-base text-amber-900 ring-1 ring-gold/40" onClick={() => setOpenHint(openHint === "b" ? null : "b")}>
                 💡 تلميح
               </button>
             )}
