@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LESSON_TITLE, QUIZ, SLIDES, TOTAL_SLIDES } from "@/lib/lesson-content";
 import { summarizeActivities } from "@/lib/activity-summary";
-import { allAttempts, attemptAsRecord, bestQuizPercent } from "@/lib/attempts";
+import { allAttempts, attemptAsRecord, bestAttemptRecord, bestQuizPercent } from "@/lib/attempts";
 import { FIXED_CLASS, FIXED_CLASS_FULL, FIXED_CLASS_LABEL } from "@/lib/config";
 import { formatDate, getTeacherPin, type ProgressRecord } from "@/lib/client-api";
 import { cx } from "@/components/ui";
@@ -86,7 +86,7 @@ function ReportFooter({ page }: { page?: string }) {
 }
 
 /* ------------------------------ class report ------------------------------ */
-function ClassReport({ students }: { students: ProgressRecord[] }) {
+function ClassReport({ students, bestOnly }: { students: ProgressRecord[]; bestOnly: boolean }) {
   const tested = students.filter((s) => quizPct(s) !== null);
   const avgQuiz = tested.length ? Math.round(tested.reduce((a, s) => a + (quizPct(s) ?? 0), 0) / tested.length) : null;
   const avgProgress = students.length ? Math.round(students.reduce((a, s) => a + pct(s), 0) / students.length) : 0;
@@ -109,7 +109,7 @@ function ClassReport({ students }: { students: ProgressRecord[] }) {
 
   return (
     <section className="report-sheet break-after-page rounded-3xl bg-white p-5 shadow-xl ring-1 ring-black/5 sm:p-7">
-      <ReportHeader title="تقرير أداء الطلاب" subtitle={`${FIXED_CLASS_FULL} — فصل ${FIXED_CLASS_LABEL} — عدد الطلاب: ${students.length}`} />
+      <ReportHeader title="تقرير أداء الطلاب" subtitle={`${FIXED_CLASS_FULL} — فصل ${FIXED_CLASS_LABEL} — عدد الطلاب: ${students.length}${bestOnly ? " — (تُعرض المحاولة الأفضل لكل طالب)" : ""}`} />
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <Kpi label="عدد الطلاب" value={students.length} icon="👥" color="#2f4b6e" />
@@ -219,6 +219,16 @@ function ClassReport({ students }: { students: ProgressRecord[] }) {
                   <td className="px-2 py-1.5 font-bold">
                     {(() => {
                       const at = allAttempts(s);
+                      const bestRound = (s as ProgressRecord & { __bestRound?: number; __attempts?: number }).__bestRound;
+                      const total = (s as ProgressRecord & { __attempts?: number }).__attempts ?? at.length;
+                      if (bestOnly) {
+                        return (
+                          <span>
+                            {qp === null ? "—" : `${s.quizScore}/${s.quizTotal} (${qp}%)`}
+                            {total > 1 && bestRound && <span className="ms-1 rounded-full bg-gold-light px-1.5 py-0.5 text-[10px] font-bold text-amber-900">⭐ الأفضل (م{bestRound} من {total})</span>}
+                          </span>
+                        );
+                      }
                       if (at.length === 1) return qp === null ? "—" : `${s.quizScore}/${s.quizTotal} (${qp}%)`;
                       return (
                         <span className="flex flex-wrap gap-1">
@@ -272,7 +282,7 @@ function Answer({ title, text, tone = "neutral" }: { title: string; text?: strin
   );
 }
 
-function StudentReport({ s, index }: { s: ProgressRecord; index: number }) {
+function StudentReport({ s, index, bestOnly }: { s: ProgressRecord; index: number; bestOnly: boolean }) {
   const qp = quizPct(s);
   const g = grade(qp);
   const tf = act<{ score?: number; total?: number }>(s, "truefalse");
@@ -281,10 +291,16 @@ function StudentReport({ s, index }: { s: ProgressRecord; index: number }) {
   const summary = summarizeActivities(s);
   const attempts = allAttempts(s);
   const best = bestQuizPercent(s);
+  const bestMeta = s as ProgressRecord & { __bestRound?: number; __attempts?: number };
 
   return (
     <section className="report-sheet break-after-page rounded-3xl bg-white p-5 shadow-xl ring-1 ring-black/5 last:break-after-auto sm:p-7">
-      <ReportHeader title={`تقرير الطالب: ${s.name}`} subtitle={`فصل ${FIXED_CLASS_LABEL} — ${s.completed ? "أكمل الدرس 🎓" : "قيد التقدم"}${s.locked ? " — الاسم مثبت من المعلم 🔒" : ""}`} />
+      <ReportHeader
+        title={`تقرير الطالب: ${s.name}`}
+        subtitle={`فصل ${FIXED_CLASS_LABEL} — ${s.completed ? "أكمل الدرس 🎓" : "قيد التقدم"}${s.locked ? " — الاسم مثبت من المعلم 🔒" : ""}${
+          bestOnly && (bestMeta.__attempts ?? 1) > 1 ? ` — ⭐ المحاولة الأفضل (رقم ${bestMeta.__bestRound} من ${bestMeta.__attempts})` : ""
+        }`}
+      />
 
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Kpi label="نسبة التقدم" value={`${pct(s)}%`} icon="📈" color="#b45309" />
@@ -300,7 +316,7 @@ function StudentReport({ s, index }: { s: ProgressRecord; index: number }) {
         <p className="col-span-2"><b>آخر دخول:</b> {formatDate(s.lastSeenAt)}</p>
       </div>
 
-      {attempts.length > 1 && (
+      {!bestOnly && attempts.length > 1 && (
         <div className="mt-3 break-inside-avoid">
           <h3 className="mb-1.5 font-heading text-base font-extrabold text-maroon">
             🔁 مقارنة المحاولات ({attempts.length}) — أفضل نتيجة اختبار: {best === null ? "—" : `${best}%`}
@@ -411,6 +427,7 @@ export default function ReportView() {
   const studentId = params.get("studentId");
   const autoPrint = params.get("print") === "1";
   const [details, setDetails] = useState(params.get("details") !== "0");
+  const [bestOnly, setBestOnly] = useState(params.get("best") !== "0"); // default: best attempt only
   const [authed, setAuthed] = useState<boolean | null>(null);
   const [students, setStudents] = useState<ProgressRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -431,7 +448,11 @@ export default function ReportView() {
     return () => clearTimeout(t);
   }, [autoPrint, students]);
 
-  const list = useMemo(() => (studentId ? (students ?? []).filter((s) => s.studentId === studentId) : (students ?? [])), [students, studentId]);
+  const list = useMemo(() => {
+    const base = studentId ? (students ?? []).filter((s) => s.studentId === studentId) : (students ?? []);
+    return bestOnly ? base.map((s) => bestAttemptRecord(s)) : base;
+  }, [students, studentId, bestOnly]);
+  const multiAttemptCount = useMemo(() => (students ?? []).filter((s) => allAttempts(s).length > 1).length, [students]);
   const single = Boolean(studentId);
 
   if (authed === false) {
@@ -456,6 +477,11 @@ export default function ReportView() {
           </button>
           <h1 className="font-heading text-lg font-black text-saudi">📄 {single ? "تقرير الطالب" : "تقرير الفصل"} — PDF</h1>
           <div className="ms-auto flex flex-wrap items-center gap-2">
+            <label className={cx("flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-bold ring-1", bestOnly ? "bg-gold-light text-amber-900 ring-gold/50" : "bg-sand ring-sand-dark")} title="يعرض لكل طالب تقدم واختبار محاولته الأفضل ويخفي بقية المحاولات">
+              <input type="checkbox" className="h-4 w-4 accent-amber-600" checked={bestOnly} onChange={(e) => setBestOnly(e.target.checked)} />
+              ⭐ المحاولة الأفضل فقط
+              {multiAttemptCount > 0 && <span className="text-xs font-normal opacity-80">({multiAttemptCount} طالب لديهم أكثر من محاولة)</span>}
+            </label>
             {!single && (
               <label className="flex items-center gap-2 rounded-2xl bg-sand px-3 py-2 text-sm font-bold">
                 <input type="checkbox" className="h-4 w-4 accent-saudi" checked={details} onChange={(e) => setDetails(e.target.checked)} />
@@ -477,8 +503,8 @@ export default function ReportView() {
             <span className="h-6 w-6 animate-spin rounded-full border-4 border-saudi border-t-transparent" /> جارٍ إعداد التقرير...
           </div>
         )}
-        {students && !single && <ClassReport students={list} />}
-        {students && (single || details) && list.map((s, i) => <StudentReport key={s.studentId} s={s} index={i} />)}
+        {students && !single && <ClassReport students={list} bestOnly={bestOnly} />}
+        {students && (single || details) && list.map((s, i) => <StudentReport key={s.studentId} s={s} index={i} bestOnly={bestOnly} />)}
         {students && single && list.length === 0 && <div className="card p-6 text-center">لم يتم العثور على الطالب.</div>}
       </div>
     </div>

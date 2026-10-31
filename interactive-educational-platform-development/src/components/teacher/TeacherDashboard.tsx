@@ -259,7 +259,7 @@ export default function TeacherDashboard() {
   if (!authed) return <PinGate onOk={() => setAuthed(true)} />;
 
   /* --------------------------- actions --------------------------- */
-  const openReport = (studentId?: string) => router.push(studentId ? `/teacher/report?studentId=${encodeURIComponent(studentId)}` : "/teacher/report?details=1");
+  const openReport = (studentId?: string) => router.push(studentId ? `/teacher/report?studentId=${encodeURIComponent(studentId)}&best=1` : "/teacher/report?details=1&best=1");
   const removeStudent = async (s: ProgressRecord) => {
     if (!confirm(`حذف سجل الطالب «${s.name}»؟`)) return;
     try {

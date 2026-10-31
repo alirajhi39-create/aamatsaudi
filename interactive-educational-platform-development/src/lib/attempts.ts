@@ -94,6 +94,33 @@ export function bestQuizPercent(s: ProgressRecord): number | null {
   return best;
 }
 
+/**
+ * The student's best attempt: highest quiz percentage, then completed lesson, then furthest
+ * progress, then the most recent one.
+ */
+export function bestAttempt(s: ProgressRecord): Attempt {
+  const attempts = allAttempts(s);
+  const score = (a: Attempt) => {
+    const quiz = a.quizScore !== null && a.quizTotal ? a.quizScore / a.quizTotal : -1;
+    return [quiz, a.completed ? 1 : 0, a.maxSlide, a.round] as const;
+  };
+  return attempts.reduce((best, a) => {
+    const x = score(a);
+    const y = score(best);
+    for (let i = 0; i < x.length; i++) {
+      if (x[i] > y[i]) return a;
+      if (x[i] < y[i]) return best;
+    }
+    return best;
+  }, attempts[0]);
+}
+
+/** Record view of the best attempt (progress + quiz + activities of that attempt). */
+export function bestAttemptRecord(s: ProgressRecord): ProgressRecord & { __bestRound: number; __attempts: number } {
+  const a = bestAttempt(s);
+  return { ...attemptAsRecord(s, a), activities: { ...a.activities }, __bestRound: a.round, __attempts: allAttempts(s).length };
+}
+
 /** Build a pseudo ProgressRecord for a past attempt so existing summaries/tables can render it. */
 export function attemptAsRecord(s: ProgressRecord, a: Attempt): ProgressRecord {
   return {
