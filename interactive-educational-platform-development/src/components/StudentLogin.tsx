@@ -176,7 +176,7 @@ export default function StudentLogin() {
                 </button>
               )}
               {errorInfo?.detail && (
-                <details className="mt-2 text-xs text-rose-900/70">
+                <details open className="mt-2 text-xs text-rose-900/70">
                   <summary className="cursor-pointer select-none font-bold">تفاصيل تقنية للمعلم</summary>
                   <p dir="ltr" className="mt-1 break-all rounded-lg bg-white/70 p-2 text-left font-mono">
                     {errorInfo.code ? `[${errorInfo.code}] ` : ""}

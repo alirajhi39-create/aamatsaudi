@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { asc, eq, sql } from "drizzle-orm";
-import { db, dbTarget } from "@/db";
+import { TransactionRollbackError, asc, eq, sql } from "drizzle-orm";
+import { db, dbTarget, getRetryStats, poolStats } from "@/db";
 import { ensureSchema } from "@/db/ensure-schema";
 import { lessonProgress, lessonSounds, teacherNames } from "@/db/schema";
 import { corsHeaders, error, json, preflight } from "@/lib/cors";
@@ -16,6 +16,7 @@ import {
   serializeProgress,
 } from "@/lib/progress-service";
 import { MAX_SOUND_BYTES } from "@/lib/sound-keys";
+import { FIXED_CLASS } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -84,12 +85,15 @@ async function runDiagnostics(req: NextRequest) {
   }
   report.database = database;
 
-  // Schema (auto-provisioning)
+  // Schema (auto-provisioning + constraint verification)
+  let schemaOk = false;
   if (database.connected) {
     try {
       const status = await ensureSchema(true);
       report.schema = status;
-      if (status.provisioned) problems.push("تم إنشاء/تحديث الجداول تلقائياً أثناء هذا الفحص.");
+      schemaOk = status.ok;
+      if (status.provisioned) problems.push("تم إنشاء/تحديث الجداول أو القيود تلقائياً أثناء هذا الفحص.");
+      for (const m of status.missingOptional) problems.push(`تحذير: الفهرس ${m} غير موجود (ربما بسبب أسماء مكررة قديمة).`);
       for (const w of status.warnings) problems.push(`تحذير مخطط: ${w}`);
     } catch (e) {
       report.ok = false;
@@ -98,6 +102,62 @@ async function runDiagnostics(req: NextRequest) {
       problems.push(`${info.message} ${info.hint ?? ""}`.trim());
     }
   }
+
+  // Write self-test: run the real student upsert twice inside a transaction, then roll it back.
+  const writeTest: Record<string, unknown> = { ok: false, step: null };
+  if (database.connected && schemaOk) {
+    const sid = `diag_${Date.now().toString(36)}`;
+    const t0 = Date.now();
+    try {
+      await db.transaction(async (tx) => {
+        const upsert = () =>
+          tx
+            .insert(lessonProgress)
+            .values({ studentId: sid, name: "فحص تلقائي", nameKey: "", className: FIXED_CLASS, currentSlide: 1, maxSlide: 1, activities: { diag: true }, lastSeenAt: new Date() })
+            .onConflictDoUpdate({
+              target: lessonProgress.studentId,
+              set: {
+                currentSlide: 2,
+                maxSlide: sql`GREATEST(${lessonProgress.maxSlide}, ${2})`,
+                quizAttempts: sql`${lessonProgress.quizAttempts} + 1`,
+                activities: sql`COALESCE(${lessonProgress.activities}, '{}'::jsonb) || ${JSON.stringify({ diag2: true })}::jsonb`,
+                completed: sql`${lessonProgress.completed} OR ${false}`,
+                updatedAt: new Date(),
+              },
+            })
+            .returning({ id: lessonProgress.id, maxSlide: lessonProgress.maxSlide });
+        writeTest.step = "insert";
+        await upsert();
+        writeTest.step = "upsert (on conflict)";
+        const [row] = await upsert();
+        writeTest.step = "teacher_names insert";
+        await tx.insert(teacherNames).values({ studentId: sid, name: "فحص تلقائي", nameKey: sid, className: FIXED_CLASS }).onConflictDoNothing();
+        writeTest.step = "select";
+        await tx.select({ id: lessonProgress.id }).from(lessonProgress).where(eq(lessonProgress.studentId, sid)).limit(1);
+        writeTest.upsertedMaxSlide = row?.maxSlide ?? null;
+        writeTest.step = "rollback";
+        tx.rollback();
+      });
+    } catch (e) {
+      if (e instanceof TransactionRollbackError) {
+        writeTest.ok = true;
+        writeTest.step = "done";
+      } else {
+        report.ok = false;
+        const info = describeDbError(e);
+        writeTest.error = info.message;
+        writeTest.code = info.code;
+        writeTest.detail = info.detail;
+        if (info.hint) writeTest.hint = info.hint;
+        problems.push(`فشل اختبار الكتابة عند خطوة «${writeTest.step}»: ${info.message} [${info.code}] ${info.hint ?? ""}`.trim());
+      }
+    }
+    writeTest.latencyMs = Date.now() - t0;
+  } else if (database.connected) {
+    writeTest.skipped = "schema incomplete";
+  }
+  report.writeTest = writeTest;
+  report.pool = { ...poolStats(), retry: getRetryStats() };
 
   const tables: Record<string, unknown> = {};
   if (database.connected) {

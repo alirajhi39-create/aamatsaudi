@@ -510,13 +510,53 @@ export default function TeacherDashboard() {
               <div className="card p-8 text-center text-ink/50">جارٍ الفحص...</div>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                  <DiagCard label="الحالة العامة" ok={Boolean(diag.ok)} value={diag.ok ? "سليم" : "توجد مشكلة"} />
-                  <DiagCard label="قاعدة البيانات" ok={Boolean((diag.database as { connected?: boolean })?.connected)} value={`${(diag.database as { latencyMs?: number })?.latencyMs ?? "—"} ms`} />
-                  {Object.entries((diag.tables as Record<string, { exists?: boolean; rows?: number }>) ?? {}).map(([name, t]) => (
-                    <DiagCard key={name} label={name} ok={Boolean(t.exists)} value={t.exists ? `${t.rows ?? 0} صف` : "غير موجود"} />
-                  ))}
-                </div>
+                {(() => {
+                  const problems = (diag.problems as string[] | undefined) ?? [];
+                  const wt = (diag.writeTest as { ok?: boolean; step?: string | null; error?: string; code?: string; detail?: string; hint?: string; latencyMs?: number; skipped?: string } | undefined) ?? {};
+                  const schema = (diag.schema as { ok?: boolean; missingCritical?: string[]; missingOptional?: string[]; provisioned?: boolean } | undefined) ?? {};
+                  const dbInfo = (diag.database as { connected?: boolean; latencyMs?: number; host?: string; ssl?: string; pooler?: boolean; error?: string } | undefined) ?? {};
+                  return (
+                    <>
+                      <div className={cx("rounded-3xl p-4 ring-2", diag.ok ? "bg-emerald-50 ring-emerald-200" : "bg-rose-50 ring-rose-200")}>
+                        <p className={cx("font-heading text-lg font-extrabold", diag.ok ? "text-emerald-800" : "text-rose-800")}>
+                          {diag.ok ? "✅" : "❌"} {String(diag.summary ?? (diag.ok ? "سليم" : "توجد مشكلة"))}
+                        </p>
+                        {problems.length > 0 && (
+                          <ul className="mt-2 list-inside list-disc space-y-1 text-base leading-relaxed">
+                            {problems.map((p, i) => (
+                              <li key={i}>{p}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <p className="mt-2 text-xs text-ink/60">
+                          المضيف: <span dir="ltr">{dbInfo.host ?? "—"}</span> — SSL: {dbInfo.ssl ?? "—"} — Pooler: {dbInfo.pooler ? "نعم" : "لا"}
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                        <DiagCard label="الحالة العامة" ok={Boolean(diag.ok)} value={diag.ok ? "سليم" : "توجد مشكلة"} />
+                        <DiagCard label="الاتصال بقاعدة البيانات" ok={Boolean(dbInfo.connected)} value={dbInfo.connected ? `${dbInfo.latencyMs ?? "—"} ms` : dbInfo.error ?? "فشل"} />
+                        <DiagCard label="الجداول والقيود" ok={Boolean(schema.ok)} value={schema.ok ? (schema.missingOptional?.length ? "مكتملة (تحذيرات)" : "مكتملة") : `ناقصة: ${schema.missingCritical?.length ?? "؟"}`} />
+                        <DiagCard label="اختبار الكتابة (إنشاء سجل طالب)" ok={Boolean(wt.ok)} value={wt.ok ? `نجح (${wt.latencyMs ?? "—"} ms)` : wt.skipped ? "لم يُنفَّذ" : `فشل عند: ${wt.step ?? "—"}`} />
+                        {Object.entries((diag.tables as Record<string, { exists?: boolean; rows?: number }>) ?? {}).map(([name, t]) => (
+                          <DiagCard key={name} label={name} ok={Boolean(t.exists)} value={t.exists ? `${t.rows ?? 0} صف` : "غير موجود"} />
+                        ))}
+                      </div>
+                      {!wt.ok && wt.error && (
+                        <div className="card p-4 ring-2 ring-rose-200">
+                          <p className="font-heading font-extrabold text-rose-800">تفاصيل فشل اختبار الكتابة</p>
+                          <p className="mt-1 text-base">{wt.error}</p>
+                          {wt.hint && <p className="mt-1 text-sm text-ink/70">💡 {wt.hint}</p>}
+                          <p dir="ltr" className="mt-2 break-all rounded-xl bg-sand p-2 text-left font-mono text-xs">
+                            [{wt.code}] {wt.detail}
+                          </p>
+                          <a className="btn-secondary mt-3 py-2 text-sm" href="/api/setup" target="_blank" rel="noreferrer">
+                            🛠️ تشغيل الإصلاح التلقائي (/api/setup)
+                          </a>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 <pre dir="ltr" className="card max-h-[60vh] overflow-auto p-4 text-left text-xs leading-relaxed">
                   {JSON.stringify(diag, null, 2)}
                 </pre>

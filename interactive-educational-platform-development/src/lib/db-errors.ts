@@ -1,6 +1,9 @@
 import { dbTarget } from "@/db";
 import { DbConfigError, ensureSchema, resetSchemaMemo } from "@/db/ensure-schema";
+import { errorCode, errorMessage, isTransientDbError, rootCause } from "@/db/transient";
 import { json } from "@/lib/cors";
+
+export { rootCause } from "@/db/transient";
 
 export type DbErrorInfo = {
   code: string;
@@ -13,34 +16,14 @@ export type DbErrorInfo = {
   retry?: boolean;
 };
 
-type AnyErr = {
-  code?: string;
-  message?: string;
-  cause?: AnyErr;
-  errors?: AnyErr[];
-  name?: string;
-};
-
-/** Unwrap Drizzle's DrizzleQueryError ("Failed query: …") and Node AggregateErrors to the root cause. */
-export function rootCause(e: unknown): AnyErr {
-  let cur = (e ?? {}) as AnyErr;
-  for (let i = 0; i < 6 && cur; i++) {
-    if (cur.cause && typeof cur.cause === "object") cur = cur.cause;
-    else if (Array.isArray(cur.errors) && cur.errors[0]) cur = cur.errors[0];
-    else break;
-  }
-  return cur ?? {};
-}
-
 export function isSchemaMissingError(e: unknown): boolean {
-  const c = rootCause(e);
-  return c.code === "42P01" || c.code === "42703";
+  const c = errorCode(e);
+  return c === "42P01" || c === "42703" || c === "42P10";
 }
 
 export function describeDbError(e: unknown): DbErrorInfo {
-  const root = rootCause(e);
-  const code = String(root.code ?? (e as AnyErr)?.code ?? "");
-  const msg = String(root.message ?? (e as AnyErr)?.message ?? "خطأ غير معروف");
+  const code = errorCode(e);
+  const msg = errorMessage(e) || "خطأ غير معروف";
   const lower = msg.toLowerCase();
   const host = dbTarget.host ?? "—";
   const base = { code: code || "DB_ERROR", status: 503, detail: code ? `${code}: ${msg}` : msg };
@@ -71,8 +54,21 @@ export function describeDbError(e: unknown): DbErrorInfo {
       retry: true,
     };
   }
+  if (code === "42P10") {
+    resetSchemaMemo();
+    void ensureSchema(true).catch(() => {});
+    return {
+      ...base,
+      message: "جدول التقدم يفتقد قيد التفرد على معرف الطالب؛ جارٍ إصلاحه تلقائياً.",
+      hint: "أعد المحاولة بعد لحظات، أو افتح /api/setup ثم تحقق من «التشخيص».",
+      retry: true,
+    };
+  }
+  if (code === "23505") {
+    return { ...base, status: 409, message: "هذا السجل موجود مسبقاً (اسم مكرر).", hint: "لا يمكن تكرار الاسم نفسه في الفصل." };
+  }
   if (code === "42501") {
-    return { ...base, message: "حساب قاعدة البيانات لا يملك صلاحية إنشاء الجداول.", hint: "شغّل: npx drizzle-kit push --config drizzle.config.prod.ts بحساب يملك الصلاحية." };
+    return { ...base, message: "حساب قاعدة البيانات لا يملك الصلاحية اللازمة على الجداول.", hint: "تأكد أن الدور المستخدم في DATABASE_URL هو مالك قاعدة البيانات (مثل neondb_owner)." };
   }
   if (code === "28P01" || code === "28000") {
     return { ...base, message: "اسم المستخدم أو كلمة المرور لقاعدة البيانات غير صحيحة.", hint: `راجع رابط الاتصال بالمضيف ${host}.` };
@@ -83,30 +79,36 @@ export function describeDbError(e: unknown): DbErrorInfo {
   if (code === "53300" || lower.includes("too many connections") || lower.includes("remaining connection slots")) {
     return { ...base, message: "تجاوز عدد الاتصالات بقاعدة البيانات الحد المسموح.", hint: "استخدم رابط الـ pooler من Neon (يحتوي على -pooler في اسم المضيف).", retry: true };
   }
-  if (code === "ENOTFOUND" || code === "EAI_AGAIN") {
+  if (code === "ENOTFOUND") {
     return { ...base, message: "تعذر العثور على خادم قاعدة البيانات (اسم المضيف غير صحيح).", hint: `المضيف: ${host}` };
   }
-  if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || lower.includes("timeout") || lower.includes("connection terminated")) {
-    return {
-      ...base,
-      message: "تعذر الاتصال بخادم قاعدة البيانات.",
-      hint: dbTarget.isLocal ? "الرابط يشير إلى قاعدة محلية؛ تأكد من ضبط DATABASE_URL لقاعدة Neon على الخادم." : `تحقق من أن قاعدة ${host} تعمل (قد تكون في وضع السكون) ثم أعد المحاولة.`,
-      retry: true,
-    };
+  if (code === "57014" || lower.includes("statement timeout") || lower.includes("canceling statement")) {
+    return { ...base, message: "استغرق الاستعلام وقتاً أطول من المسموح.", hint: "أعد المحاولة؛ وإن تكرر تحقق من حجم قاعدة البيانات.", retry: true };
   }
   if (lower.includes("ssl") || lower.includes("certificate") || lower.includes("insecure") || code.includes("CERT")) {
     return { ...base, message: "مشكلة في اتصال SSL بقاعدة البيانات.", hint: "تأكد من أن رابط DATABASE_URL ينتهي بـ ?sslmode=require." };
   }
-  if (code === "57P01" || code === "57P03" || lower.includes("starting up") || lower.includes("shutting down")) {
-    return { ...base, message: "قاعدة البيانات غير متاحة مؤقتاً (قد تكون في وضع الاستيقاظ).", hint: "أعد المحاولة بعد ثوانٍ.", retry: true };
+  if (isTransientDbError(e)) {
+    return {
+      ...base,
+      message: "انقطع الاتصال بقاعدة البيانات مؤقتاً (قد تكون في وضع الاستيقاظ).",
+      hint: dbTarget.isLocal ? "الرابط يشير إلى قاعدة محلية؛ تأكد من ضبط DATABASE_URL لقاعدة Neon على الخادم." : `أعد المحاولة بعد ثوانٍ. (المضيف: ${host}${dbTarget.pooler ? "" : " — يُنصح باستخدام رابط -pooler من Neon"})`,
+      retry: true,
+    };
   }
-  return { ...base, status: 500, message: "حدث خطأ أثناء التعامل مع قاعدة البيانات.", hint: "افتح لوحة المعلم → التشخيص لعرض التفاصيل." };
+  return {
+    ...base,
+    status: 500,
+    message: `حدث خطأ أثناء التعامل مع قاعدة البيانات${code ? ` (الرمز ${code})` : ""}.`,
+    hint: "افتح لوحة المعلم → التشخيص؛ يعرض «اختبار الكتابة» سبب المشكلة بدقة.",
+  };
 }
 
 /** JSON error response for any DB related failure (friendly message + technical detail). */
 export function dbError(e: unknown, req?: Request) {
   const info = describeDbError(e);
-  if (process.env.NODE_ENV !== "production" || process.env.VERCEL) console.error("[db]", info.code, info.detail);
+  const root = rootCause(e);
+  console.error("[db]", info.code, info.detail, root.stack ? `\n${String(root.stack).split("\n").slice(0, 4).join("\n")}` : "");
   return json(
     { ok: false, error: info.message, code: info.code, detail: info.detail, hint: info.hint, retry: info.retry ?? false },
     { req, status: info.status },
