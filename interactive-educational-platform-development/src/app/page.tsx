@@ -1,4 +1,4 @@
-import Image from "next/image";
+import LessonImage from "@/components/LessonImage";
 import Link from "next/link";
 import StudentLogin from "@/components/StudentLogin";
 import { BIG_QUESTION, IMAMS, LESSON_SUBTITLE, LESSON_TITLE, SLIDES } from "@/lib/lesson-content";
@@ -10,7 +10,7 @@ export default function HomePage() {
     <div className="min-h-screen">
       <section className="relative overflow-hidden">
         <div className="absolute inset-0">
-          <Image src="/images/hero.jpg" alt="" fill priority className="object-cover" sizes="100vw" />
+          <LessonImage src="/images/hero.jpg" alt="" fill priority className="object-cover" />
           <div className="absolute inset-0 bg-gradient-to-b from-saudi-dark/80 via-saudi-dark/60 to-sand" />
         </div>
         <div className="relative mx-auto grid max-w-6xl gap-8 px-4 pb-10 pt-10 sm:px-6 lg:grid-cols-2 lg:pt-16">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Image from "next/image";
+import LessonImage from "@/components/LessonImage";
 import {
   ABDULLAH_CARDS,
   ASAD_QUOTE,
@@ -83,7 +83,7 @@ export function CoverSlide({ session, done, markDone, next }: SlideProps) {
   return (
     <div className="grid gap-6 lg:grid-cols-5">
       <div className="relative min-h-[260px] overflow-hidden rounded-3xl lg:col-span-2">
-        <Image src="/images/hero.jpg" alt="قلعة في نجد" fill className="object-cover" priority sizes="(max-width:1024px) 100vw, 40vw" />
+        <LessonImage src="/images/hero.jpg" alt="قلعة في نجد" fill className="object-cover" priority />
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
         <div className="absolute bottom-4 right-4 left-4 text-white">
           <p className="text-sm opacity-90">الوحدة الثالثة — الدرس الثامن</p>
@@ -280,7 +280,7 @@ export function BattleSlide({ value, update, done, markDone }: SlideProps) {
       <div className="grid content-start gap-4 lg:col-span-2">
         <figure className="overflow-hidden rounded-3xl ring-1 ring-black/10">
           <div className="relative h-44">
-            <Image src="/images/hulwa-fort.jpg" alt="قلعة الإمام تركي بن عبدالله في الحلوة" fill className="object-cover" sizes="(max-width:1024px) 100vw, 40vw" />
+            <LessonImage src="/images/hulwa-fort.jpg" alt="قلعة الإمام تركي بن عبدالله في الحلوة" fill className="object-cover" />
           </div>
           <figcaption className="bg-navy px-3 py-2 text-center text-sm font-bold text-white">قلعة الإمام تركي بن عبدالله في الحُلوة</figcaption>
         </figure>
@@ -336,7 +336,7 @@ export function StorySlide({ value, update, done, markDone }: SlideProps) {
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <div className="relative min-h-[280px] overflow-hidden rounded-3xl ring-1 ring-black/10">
-        <Image src="/images/escape.jpg" alt="الهروب من السجن" fill className="object-cover" sizes="(max-width:1024px) 100vw, 50vw" />
+        <LessonImage src="/images/escape.jpg" alt="الهروب من السجن" fill className="object-cover" />
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-4 text-white">
           <p className="text-sm opacity-90">قصة تفاعلية</p>
           <h3 className="font-heading text-2xl font-black">عودة الإمام فيصل بن تركي إلى الرياض</h3>
@@ -415,7 +415,7 @@ export function AbdullahSlide({ value, update, done, markDone }: SlideProps) {
         </div>
         <figure className="overflow-hidden rounded-3xl ring-1 ring-black/10 lg:col-span-2">
           <div className="relative h-40">
-            <Image src="/images/old-riyadh.jpg" alt="مدينة الرياض قديماً" fill className="object-cover" sizes="(max-width:1024px) 100vw, 40vw" />
+            <LessonImage src="/images/old-riyadh.jpg" alt="مدينة الرياض قديماً" fill className="object-cover" />
           </div>
           <figcaption className="bg-navy px-3 py-2 text-center text-sm font-bold text-white">مدينة الرياض قديماً</figcaption>
         </figure>
