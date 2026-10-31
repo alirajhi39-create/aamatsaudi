@@ -134,3 +134,26 @@ export function attemptAsRecord(s: ProgressRecord, a: Attempt): ProgressRecord {
     activities: a.activities,
   };
 }
+
+/** Seconds the student spent with the slide timers running (per attempt activities). */
+export function timeSpentSeconds(activities: Record<string, unknown>): number {
+  let total = 0;
+  for (const [key, v] of Object.entries(activities)) {
+    if (key.startsWith("__") || !v || typeof v !== "object") continue;
+    const t = (v as { timer?: { elapsed?: number; startedAt?: number | null } }).timer;
+    if (!t) continue;
+    total += Number(t.elapsed) || 0;
+    if (typeof t.startedAt === "number") total += Math.max(0, (Date.now() - t.startedAt) / 1000);
+  }
+  return Math.round(total);
+}
+
+export function formatDuration(seconds: number): string {
+  if (seconds <= 0) return "—";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m === 0) return `${s} ث`;
+  if (m < 60) return `${m} د${s ? ` ${s} ث` : ""}`;
+  const h = Math.floor(m / 60);
+  return `${h} س ${m % 60} د`;
+}

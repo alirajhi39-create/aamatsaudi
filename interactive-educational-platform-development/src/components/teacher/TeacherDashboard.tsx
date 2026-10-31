@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SLIDES, TOTAL_SLIDES } from "@/lib/lesson-content";
 import { summarizeActivities } from "@/lib/activity-summary";
-import { allAttempts, attemptAsRecord, bestQuizPercent, currentRound, type Attempt } from "@/lib/attempts";
+import { allAttempts, attemptAsRecord, bestQuizPercent, currentRound, formatDuration, timeSpentSeconds, type Attempt } from "@/lib/attempts";
 import { FIXED_CLASS, FIXED_CLASS_FULL, FIXED_CLASS_LABEL } from "@/lib/config";
 import { formatDate, getTeacherPin, setTeacherPin, teacherFetch, type ProgressRecord } from "@/lib/client-api";
 import { Modal, ProgressRing, cx, useToast } from "@/components/ui";
@@ -771,6 +771,7 @@ function StudentDetail({ s: full }: { s: ProgressRecord }) {
           <Info label="أقصى شريحة" value={`${s.maxSlide + 1}/${TOTAL_SLIDES}`} />
           <Info label="الاختبار الختامي" value={qp === null ? "لم يختبر" : `${s.quizScore}/${s.quizTotal} (${qp}%)`} />
           <Info label="صواب/خطأ" value={tf.score !== undefined ? `${tf.score}/${tf.total}` : "—"} />
+          <Info label="⏱️ زمن المؤقتات" value={formatDuration(timeSpentSeconds(s.activities as Record<string, unknown>))} />
           <Info label="أول دخول" value={formatDate(s.createdAt)} />
           <Info label="آخر ظهور" value={formatDate(s.lastSeenAt)} />
         </div>

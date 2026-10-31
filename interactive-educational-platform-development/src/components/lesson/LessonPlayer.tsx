@@ -9,6 +9,7 @@ import { getSession, loginStudent, restartLessonRemote, saveProgressRemote, setS
 import { sound } from "@/lib/sound";
 import { narrationKey } from "@/lib/sound-keys";
 import { StrategyBadge, cx, useToast } from "@/components/ui";
+import SlideTimer, { type TimerState } from "./SlideTimer";
 import type { SlideProps, SlideValue } from "./types";
 import { AbdullahSlide, BattleSlide, CoverSlide, KwlSlide, ReadingFaisalSlide, StorySlide, ValuesSlide } from "./ReadingSlides";
 import { CauseEffectSlide, CausesSlide, ClassifySlide, MatchingSlide, MindmapSlide, TimelineSlide, TrueFalseSlide } from "./InteractiveSlides";
@@ -430,7 +431,12 @@ export default function LessonPlayer() {
             </h2>
             <StrategyBadge strategy={slide.strategy} />
           </div>
-          <NarrationBar narrating={narrating} muted={muted} custom={customNarration} onNarrate={toggleNarration} onMute={() => sound.setMuted(!muted)} />
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <NarrationBar narrating={narrating} muted={muted} custom={customNarration} onNarrate={toggleNarration} onMute={() => sound.setMuted(!muted)} />
+            </div>
+            <SlideTimer slideId={slide.id} value={slideValue.timer as TimerState | undefined} onChange={(t) => update(slide.id, { timer: t })} />
+          </div>
         </div>
         <div key={slide.id} className="slide-enter">
           <Comp

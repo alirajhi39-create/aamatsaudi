@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LESSON_TITLE, QUIZ, SLIDES, TOTAL_SLIDES } from "@/lib/lesson-content";
 import { summarizeActivities } from "@/lib/activity-summary";
-import { allAttempts, attemptAsRecord, bestAttemptRecord, bestQuizPercent } from "@/lib/attempts";
+import { allAttempts, attemptAsRecord, bestAttemptRecord, bestQuizPercent, formatDuration, timeSpentSeconds } from "@/lib/attempts";
 import { FIXED_CLASS, FIXED_CLASS_FULL, FIXED_CLASS_LABEL } from "@/lib/config";
 import { formatDate, getTeacherPin, type ProgressRecord } from "@/lib/client-api";
 import { cx } from "@/components/ui";
@@ -312,6 +312,7 @@ function StudentReport({ s, index, bestOnly }: { s: ProgressRecord; index: numbe
         <p><b>الشريحة الحالية:</b> {s.currentSlide + 1} — {SLIDES[s.currentSlide]?.title}</p>
         <p><b>محاولات الاختبار:</b> {s.quizAttempts}</p>
         <p><b>صواب/خطأ:</b> {tf.score !== undefined ? `${tf.score}/${tf.total}` : "—"}</p>
+        <p><b>⏱️ زمن المؤقتات:</b> {formatDuration(timeSpentSeconds(s.activities as Record<string, unknown>))}</p>
         <p><b>أول دخول:</b> {formatDate(s.createdAt)}</p>
         <p className="col-span-2"><b>آخر دخول:</b> {formatDate(s.lastSeenAt)}</p>
       </div>
@@ -477,11 +478,6 @@ export default function ReportView() {
           </button>
           <h1 className="font-heading text-lg font-black text-saudi">📄 {single ? "تقرير الطالب" : "تقرير الفصل"} — PDF</h1>
           <div className="ms-auto flex flex-wrap items-center gap-2">
-            <label className={cx("flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-bold ring-1", bestOnly ? "bg-gold-light text-amber-900 ring-gold/50" : "bg-sand ring-sand-dark")} title="يعرض لكل طالب تقدم واختبار محاولته الأفضل ويخفي بقية المحاولات">
-              <input type="checkbox" className="h-4 w-4 accent-amber-600" checked={bestOnly} onChange={(e) => setBestOnly(e.target.checked)} />
-              ⭐ المحاولة الأفضل فقط
-              {multiAttemptCount > 0 && <span className="text-xs font-normal opacity-80">({multiAttemptCount} طالب لديهم أكثر من محاولة)</span>}
-            </label>
             {!single && (
               <label className="flex items-center gap-2 rounded-2xl bg-sand px-3 py-2 text-sm font-bold">
                 <input type="checkbox" className="h-4 w-4 accent-saudi" checked={details} onChange={(e) => setDetails(e.target.checked)} />
@@ -492,6 +488,34 @@ export default function ReportView() {
               🖨️ حفظ PDF / طباعة
             </button>
           </div>
+        </div>
+        {/* Attempts mode — prominent segmented control */}
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 px-3 pb-2 sm:px-6">
+          <span className="font-heading text-base font-extrabold text-ink">🔁 المحاولات في التقرير:</span>
+          <div className="flex rounded-2xl bg-sand p-1 ring-1 ring-sand-dark" role="radiogroup" aria-label="اختيار المحاولات">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={bestOnly}
+              onClick={() => setBestOnly(true)}
+              className={cx("rounded-xl px-4 py-2 font-heading text-base font-bold transition", bestOnly ? "bg-amber-500 text-white shadow" : "text-ink/60 hover:bg-white")}
+            >
+              ⭐ المحاولة الأفضل فقط
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!bestOnly}
+              onClick={() => setBestOnly(false)}
+              className={cx("rounded-xl px-4 py-2 font-heading text-base font-bold transition", !bestOnly ? "bg-maroon text-white shadow" : "text-ink/60 hover:bg-white")}
+            >
+              📋 جميع المحاولات
+            </button>
+          </div>
+          <span className="text-sm text-ink/60">
+            {bestOnly ? "يُعرض لكل طالب تقدم واختبار محاولته الأفضل وتُخفى بقية المحاولات." : "تُعرض مقارنة كل المحاولات لكل طالب."}
+            {multiAttemptCount > 0 ? ` (${multiAttemptCount} طالب لديهم أكثر من محاولة)` : " (لا يوجد طلاب بأكثر من محاولة حالياً)"}
+          </span>
         </div>
         <p className="mx-auto max-w-5xl px-3 pb-2 text-xs text-ink/50 sm:px-6">💡 في نافذة الطباعة اختر الوجهة «حفظ بصيغة PDF» وفعّل «رسومات الخلفية» للحصول على الألوان كاملة.</p>
       </div>
