@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { SLIDES, TOTAL_SLIDES } from "@/lib/lesson-content";
@@ -60,6 +60,14 @@ function pct(s: ProgressRecord) {
 function quizPct(s: ProgressRecord) {
   return s.quizScore !== null && s.quizTotal ? Math.round((s.quizScore / s.quizTotal) * 100) : null;
 }
+type PastRun = { round: number; finishedAt: string | null; restartedAt: string; quizScore: number | null; quizTotal: number | null; quizAttempts: number; completed: boolean; maxSlide: number };
+function pastRuns(s: ProgressRecord): PastRun[] {
+  const h = (s.activities as Record<string, unknown> | undefined)?.__history;
+  return Array.isArray(h) ? (h as PastRun[]) : [];
+}
+function rounds(s: ProgressRecord) {
+  return pastRuns(s).length + 1;
+}
 function doneCount(s: ProgressRecord) {
   return SLIDES.filter((sl) => (s.activities?.[sl.id] as { done?: boolean } | undefined)?.done).length;
 }
@@ -100,20 +108,89 @@ export default function TeacherDashboard() {
   const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [rosterNames, setRosterNames] = useState("");
   const [diag, setDiag] = useState<Record<string, unknown> | null>(null);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [liveState, setLiveState] = useState<"idle" | "syncing" | "error">("idle");
+  const [, setTick] = useState(0);
+  const prevSnapshot = useRef<Map<string, string> | null>(null);
+  const changedIds = useRef<Set<string>>(new Set());
+  const [, bumpChanged] = useState(0);
 
   useEffect(() => setAuthed(Boolean(getTeacherPin())), []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/progress?class=${encodeURIComponent(FIXED_CLASS)}`, { cache: "no-store" });
-      setData((await res.json()) as ListResponse);
-    } catch {
-      toast("تعذر تحميل البيانات", "err");
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+  /** Load the class report. `silent` = background refresh (no spinner, toast only on new activity). */
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      else setLiveState("syncing");
+      try {
+        const res = await fetch(`/api/progress?class=${encodeURIComponent(FIXED_CLASS)}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as ListResponse;
+        // Detect what changed since the previous snapshot (progress / quiz / completion / new students)
+        const snap = new Map(json.students.map((s) => [s.studentId, `${s.currentSlide}|${s.maxSlide}|${s.quizScore}|${s.quizAttempts}|${s.completed}|${s.updatedAt}`]));
+        if (prevSnapshot.current) {
+          const changed = json.students.filter((s) => prevSnapshot.current!.get(s.studentId) !== snap.get(s.studentId));
+          if (changed.length > 0) {
+            changed.forEach((s) => changedIds.current.add(s.studentId));
+            bumpChanged((n) => n + 1);
+            setTimeout(() => {
+              changed.forEach((s) => changedIds.current.delete(s.studentId));
+              bumpChanged((n) => n + 1);
+            }, 6000);
+            if (silent) {
+              const fresh = changed.filter((s) => !prevSnapshot.current!.has(s.studentId));
+              toast(fresh.length > 0 ? `👋 دخل ${fresh.length === 1 ? fresh[0].name : `${fresh.length} طلاب`} إلى الدرس` : `📈 تحديث: ${changed.length === 1 ? changed[0].name : `${changed.length} طلاب`} ${changed.length === 1 ? "تقدّم" : "تقدّموا"}`);
+            }
+          }
+        }
+        prevSnapshot.current = snap;
+        setData(json);
+        setLastUpdated(new Date());
+        setLiveState("idle");
+      } catch {
+        setLiveState("error");
+        if (!silent) toast("تعذر تحميل البيانات", "err");
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [toast],
+  );
+
+  // Auto-refresh every 10s while the reports tab is visible; pauses in hidden tabs; refreshes on focus.
+  useEffect(() => {
+    if (!authed || !autoRefresh || tab !== "students") return;
+    const INTERVAL = 10_000;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (timer) clearInterval(timer);
+      timer = setInterval(() => {
+        if (document.visibilityState === "visible") void load(true);
+      }, INTERVAL);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void load(true);
+        start();
+      }
+    };
+    start();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [authed, autoRefresh, tab, load]);
+
+  // Re-render the "x seconds ago" label
+  useEffect(() => {
+    if (tab !== "students") return;
+    const t = setInterval(() => setTick((n) => n + 1), 5_000);
+    return () => clearInterval(t);
+  }, [tab]);
 
   const loadRoster = useCallback(async () => {
     try {
@@ -318,12 +395,25 @@ export default function TeacherDashboard() {
                 <option value="quiz">ترتيب: درجة الاختبار</option>
                 <option value="recent">ترتيب: آخر نشاط</option>
               </select>
-              <div className="flex w-full flex-wrap gap-2 sm:ms-auto sm:w-auto">
+              <div className="flex w-full flex-wrap items-center gap-2 sm:ms-auto sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => setAutoRefresh((v) => !v)}
+                  className={cx("flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-bold ring-1 transition", autoRefresh ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-sand text-ink/60 ring-sand-dark")}
+                  title={autoRefresh ? "إيقاف التحديث التلقائي" : "تشغيل التحديث التلقائي"}
+                >
+                  <span className="relative flex h-2.5 w-2.5">
+                    {autoRefresh && liveState !== "error" && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />}
+                    <span className={cx("relative inline-flex h-2.5 w-2.5 rounded-full", liveState === "error" ? "bg-rose-500" : autoRefresh ? "bg-emerald-500" : "bg-ink/30")} />
+                  </span>
+                  {autoRefresh ? (liveState === "syncing" ? "جارٍ التحديث…" : liveState === "error" ? "تعذر التحديث" : "تحديث تلقائي مباشر") : "التحديث التلقائي متوقف"}
+                  {lastUpdated && <span className="hidden text-xs font-normal text-ink/50 sm:inline">· آخر تحديث قبل {Math.max(0, Math.round((Date.now() - lastUpdated.getTime()) / 1000))} ث</span>}
+                </button>
                 <button className="btn-maroon py-2 text-base" onClick={() => openReport()} disabled={!students.length}>
                   📄 تقرير PDF للفصل
                 </button>
                 <button className="btn-secondary py-2 text-sm" onClick={() => void load()} disabled={loading}>
-                  {loading ? "⏳" : "🔄"} تحديث
+                  {loading ? "⏳" : "🔄"} تحديث الآن
                 </button>
                 <button className="btn-secondary py-2 text-sm" onClick={exportCsv} disabled={!students.length}>
                   ⬇️ CSV
@@ -341,7 +431,7 @@ export default function TeacherDashboard() {
             {/* Mobile cards */}
             <div className="grid gap-2 md:hidden">
               {students.map((s) => (
-                <div key={s.studentId} className="card p-3">
+                <div key={s.studentId} className={cx("card p-3 transition-shadow", changedIds.current.has(s.studentId) && "ring-2 ring-gold shadow-gold/30")}>
                   <div className="flex items-center gap-2">
                     <span className={cx("flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-heading text-lg font-bold text-white", s.completed ? "bg-saudi" : "bg-navy")}>{s.name.slice(0, 1)}</span>
                     <div className="min-w-0 flex-1">
@@ -389,13 +479,14 @@ export default function TeacherDashboard() {
                     </thead>
                     <tbody>
                       {students.map((s) => (
-                        <tr key={s.studentId} className="border-t border-black/5 hover:bg-sand/40">
+                        <tr key={s.studentId} className={cx("border-t border-black/5 transition-colors hover:bg-sand/40", changedIds.current.has(s.studentId) && "bg-gold-light/70")}>
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-2">
                               <span className={cx("flex h-9 w-9 items-center justify-center rounded-full font-heading font-bold text-white", s.completed ? "bg-saudi" : "bg-navy")}>{s.name.slice(0, 1)}</span>
                               <div>
                                 <p className="text-base font-bold">
                                   {s.name} {s.locked && <span title="مثبت من المعلم">🔒</span>}
+                                  {rounds(s) > 1 && <span className="chip ms-1 bg-maroon-light text-maroon" title="عدد مرات بدء الدرس">🔁 المحاولة {rounds(s)}</span>}
                                 </p>
                                 <p className="text-[11px] text-ink/40">{s.studentId}</p>
                               </div>
@@ -630,6 +721,21 @@ function StudentDetail({ s }: { s: ProgressRecord }) {
           })}
         </div>
       </div>
+      {pastRuns(s).length > 0 && (
+        <div>
+          <h4 className="mb-1 font-heading font-extrabold text-maroon">🔁 محاولات سابقة للدرس (أعاد الطالب الدرس {pastRuns(s).length} مرة)</h4>
+          <ul className="grid gap-1">
+            {pastRuns(s).map((r) => (
+              <li key={r.round} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-maroon-light/60 px-3 py-1.5 text-sm">
+                <span className="font-bold">المحاولة {r.round}</span>
+                <span>{r.quizScore !== null && r.quizTotal ? `الاختبار: ${r.quizScore}/${r.quizTotal} (${Math.round((r.quizScore / r.quizTotal) * 100)}%)` : "لم يختبر"}</span>
+                <span>{r.completed ? "أكملها 🎓" : `وصل للشريحة ${r.maxSlide + 1}`}</span>
+                <span className="text-xs text-ink/60">أعاد الدرس في {formatDate(r.restartedAt)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {quizHistory.length > 0 && (
         <div>
           <h4 className="mb-1 font-heading font-extrabold text-saudi">سجل محاولات الاختبار</h4>

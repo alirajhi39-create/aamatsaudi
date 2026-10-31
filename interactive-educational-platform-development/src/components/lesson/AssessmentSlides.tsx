@@ -451,7 +451,7 @@ export function QuizSlide({ value, update, done, markDone, onQuizSubmit, quiz }:
 }
 
 /* ------------------------------ Exit ticket ------------------------------ */
-export function ExitSlide({ value, update, done, markDone, session, quiz, onLessonComplete }: SlideProps) {
+export function ExitSlide({ value, update, done, markDone, session, quiz, onLessonComplete, onRestart, onExit, round = 1 }: SlideProps) {
   const exitOptions = useMemo(() => EXIT_SECTIONS.map((sec) => shuffle(sec.options)), []);
   const learned = arr<string>(value.learned);
   const liked = arr<string>(value.liked);
@@ -541,10 +541,20 @@ export function ExitSlide({ value, update, done, markDone, session, quiz, onLess
               <span>الدراسات الاجتماعية — السادس الابتدائي</span>
             </div>
           </div>
-          <div className="flex flex-wrap justify-center gap-2 print:hidden">
-            <button className="btn-secondary" onClick={() => window.print()}>🖨️ طباعة الشهادة</button>
+          <div className="grid gap-2 print:hidden sm:grid-cols-3">
+            <button className="btn-secondary text-lg" onClick={() => window.print()}>
+              🖨️ طباعة الشهادة
+            </button>
+            <button className="btn-maroon text-lg" onClick={() => void onRestart?.()}>
+              🔁 إعادة الدرس من البداية
+            </button>
+            <button className="btn-primary text-lg" onClick={onExit}>
+              🚪 خروج من الدرس
+            </button>
           </div>
-          <DoneBanner>🎉 مبارك! أكملت درس «{LESSON_TITLE}» بجميع أنشطته. تم حفظ تقدمك ودرجتك لدى المعلم.</DoneBanner>
+          <DoneBanner>
+            🎉 مبارك! أكملت درس «{LESSON_TITLE}» بجميع أنشطته{round > 1 ? ` (المحاولة ${round})` : ""}. تم حفظ تقدمك ودرجتك لدى المعلم. يمكنك إعادة الدرس بالاسم نفسه لتحسين نتيجتك، وستبقى محاولتك السابقة محفوظة.
+          </DoneBanner>
         </div>
       )}
     </div>

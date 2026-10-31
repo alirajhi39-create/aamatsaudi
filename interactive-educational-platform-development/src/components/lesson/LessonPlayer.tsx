@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LESSON_TITLE, SLIDES, TOTAL_SLIDES } from "@/lib/lesson-content";
 import { FIXED_CLASS_LABEL } from "@/lib/config";
-import { getSession, loginStudent, saveProgressRemote, setSession, type SavePayload, type StudentSession } from "@/lib/client-api";
+import { getSession, loginStudent, restartLessonRemote, saveProgressRemote, setSession, type SavePayload, type StudentSession } from "@/lib/client-api";
 import { sound } from "@/lib/sound";
 import { narrationKey } from "@/lib/sound-keys";
 import { StrategyBadge, cx, useToast } from "@/components/ui";
@@ -110,6 +110,8 @@ export default function LessonPlayer() {
   const [narrating, setNarrating] = useState(false);
   const [, setTick] = useState(0);
   const [showMap, setShowMap] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [confirmRestart, setConfirmRestart] = useState(false);
 
   const dirty = useRef(false);
   const quizSubmitRef = useRef<{ score: number; total: number } | null>(null);
@@ -287,6 +289,37 @@ export default function LessonPlayer() {
     router.push("/");
   };
 
+  /** Restart the lesson for the same student: server clears progress, client state follows. */
+  const restartLesson = useCallback(async () => {
+    if (!session || restarting) return;
+    setRestarting(true);
+    try {
+      // Drop any pending autosave so it cannot overwrite the reset with stale data.
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      dirty.current = false;
+      quizSubmitRef.current = null;
+      const res = await restartLessonRemote(session.studentId);
+      sound?.stopNarration();
+      setActivities((res.progress.activities as Activities) ?? {});
+      setQuiz({ score: null, total: null, attempts: 0 });
+      setCompleted(false);
+      setMaxIndex(0);
+      setIndex(0);
+      setConfirmRestart(false);
+      latest.current = null;
+      setSaveState("saved");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      sound?.play("welcome");
+      toast(`بدأت الدرس من جديد (المحاولة ${res.round}) 🔁`);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "تعذر إعادة الدرس", "err");
+    } finally {
+      setRestarting(false);
+    }
+  }, [session, restarting, toast]);
+
+  const round = (Array.isArray(activities.__history) ? (activities.__history as unknown[]).length : 0) + 1;
+
   /* -------------------------------- render -------------------------------- */
   if (!session || loading) {
     return (
@@ -409,23 +442,55 @@ export default function LessonPlayer() {
             quiz={quiz}
             onQuizSubmit={onQuizSubmit}
             onLessonComplete={onLessonComplete}
+            onRestart={() => setConfirmRestart(true)}
+            onExit={logout}
+            round={round}
             next={next}
           />
         </div>
       </main>
 
+      {/* Restart confirmation */}
+      {confirmRestart && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-sm sm:items-center sm:p-4" onClick={() => !restarting && setConfirmRestart(false)}>
+          <div className="card pop w-full max-w-md rounded-b-none p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:rounded-3xl sm:p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-heading text-xl font-black text-maroon">🔁 إعادة الدرس من البداية؟</h3>
+            <p className="mt-2 text-lg leading-relaxed">
+              سيتم مسح إجاباتك ونتيجة الاختبار وتبدأ من الشريحة الأولى باسمك نفسه <b>{session.name}</b>. ستبقى نتيجتك السابقة محفوظة لدى المعلم كمحاولة سابقة.
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button className="btn-secondary text-lg" onClick={() => setConfirmRestart(false)} disabled={restarting}>
+                إلغاء
+              </button>
+              <button className="btn-maroon text-lg" onClick={() => void restartLesson()} disabled={restarting}>
+                {restarting ? "لحظة..." : "نعم، أعد الدرس"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer nav */}
       <footer className="pb-safe sticky bottom-0 z-30 border-t border-black/5 bg-white/95 backdrop-blur print:hidden">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-2.5 sm:px-6 sm:py-3">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-2.5 sm:gap-3 sm:px-6 sm:py-3">
+          <button className="btn-ghost shrink-0 px-3 text-base text-rose-700 ring-1 ring-rose-200 sm:px-4" onClick={logout} title="حفظ والخروج من الدرس">
+            🚪 <span className="hidden sm:inline">خروج</span>
+          </button>
           <button className="btn-secondary flex-1 text-lg sm:flex-none sm:px-8" onClick={prev} disabled={index === 0}>
             ▶ السابق
           </button>
           <p className="hidden text-center text-base text-ink/60 md:block">
-            {index === TOTAL_SLIDES - 1 ? "هذه آخر شريحة" : canGoNext ? "يمكنك الانتقال للشريحة التالية" : "أكمل النشاط للانتقال إلى الشريحة التالية"}
+            {index === TOTAL_SLIDES - 1 ? (completed ? "أكملت الدرس 🎉" : "هذه آخر شريحة") : canGoNext ? "يمكنك الانتقال للشريحة التالية" : "أكمل النشاط للانتقال إلى الشريحة التالية"}
           </p>
-          <button className="btn-primary flex-1 text-lg sm:flex-none sm:px-8" onClick={next} disabled={!canGoNext}>
-            التالي ◀
-          </button>
+          {index === TOTAL_SLIDES - 1 && completed ? (
+            <button className="btn-maroon flex-1 text-lg sm:flex-none sm:px-8" onClick={() => setConfirmRestart(true)} disabled={restarting}>
+              🔁 إعادة الدرس
+            </button>
+          ) : (
+            <button className="btn-primary flex-1 text-lg sm:flex-none sm:px-8" onClick={next} disabled={!canGoNext}>
+              التالي ◀
+            </button>
+          )}
         </div>
         {!canGoNext && index !== TOTAL_SLIDES - 1 && <p className="pb-1.5 text-center text-xs text-ink/60 md:hidden">أكمل النشاط للانتقال إلى الشريحة التالية</p>}
       </footer>

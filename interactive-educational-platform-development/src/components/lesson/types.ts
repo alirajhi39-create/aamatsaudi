@@ -14,6 +14,12 @@ export type SlideProps = {
   quiz: { score: number | null; total: number | null; attempts: number };
   onQuizSubmit?: (score: number, total: number) => void;
   onLessonComplete?: () => void;
+  /** Restart the whole lesson for the same student (available after finishing) */
+  onRestart?: () => void | Promise<void>;
+  /** Leave the lesson (saves first) */
+  onExit?: () => void;
+  /** Which run this is (1 = first time) */
+  round?: number;
   next?: () => void;
 };
 

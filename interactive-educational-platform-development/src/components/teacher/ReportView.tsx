@@ -264,6 +264,8 @@ function StudentReport({ s, index }: { s: ProgressRecord; index: number }) {
   const quiz = act<{ answers?: Record<string, string>; history?: Array<{ score: number; total: number; at: string }> }>(s, "quiz");
   const hasQuizAnswers = quiz.answers && Object.keys(quiz.answers).length > 0;
   const summary = summarizeActivities(s);
+  const hist = (s.activities as Record<string, unknown> | undefined)?.__history;
+  const pastRuns = (Array.isArray(hist) ? hist : []) as Array<{ round: number; quizScore: number | null; quizTotal: number | null; completed: boolean }>;
 
   return (
     <section className="report-sheet break-after-page rounded-3xl bg-white p-5 shadow-xl ring-1 ring-black/5 last:break-after-auto sm:p-7">
@@ -281,6 +283,13 @@ function StudentReport({ s, index }: { s: ProgressRecord; index: number }) {
         <p><b>صواب/خطأ:</b> {tf.score !== undefined ? `${tf.score}/${tf.total}` : "—"}</p>
         <p><b>أول دخول:</b> {formatDate(s.createdAt)}</p>
         <p className="col-span-2"><b>آخر دخول:</b> {formatDate(s.lastSeenAt)}</p>
+        {pastRuns.length > 0 && (
+          <p className="col-span-2 sm:col-span-4">
+            <b>🔁 محاولات سابقة ({pastRuns.length}):</b>{" "}
+            {pastRuns.map((r) => `المحاولة ${r.round}: ${r.quizScore !== null && r.quizTotal ? `${r.quizScore}/${r.quizTotal}` : "لم يختبر"}${r.completed ? " (مكتملة)" : ""}`).join(" — ")}
+            {" — "}الحالية: المحاولة {pastRuns.length + 1}
+          </p>
+        )}
       </div>
 
       <h3 className="mb-1.5 mt-4 font-heading text-base font-extrabold text-saudi">🗂️ خريطة إنجاز الأنشطة</h3>

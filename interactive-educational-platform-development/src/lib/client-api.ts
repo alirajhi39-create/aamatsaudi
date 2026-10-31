@@ -159,6 +159,23 @@ export async function saveProgressRemote(payload: SavePayload, keepalive = false
   return data;
 }
 
+/** Restart the lesson for the same student (clears activities + quiz, archives the previous run). */
+export async function restartLessonRemote(studentId: string) {
+  let res: Response;
+  try {
+    res = await fetch("/api/progress/restart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ studentId }),
+    });
+  } catch {
+    throw toApiError(null, null, "تعذر إعادة الدرس");
+  }
+  const data = (await readJson(res)) as { ok: boolean; round?: number; progress?: ProgressRecord } | null;
+  if (!res.ok || !data?.ok || !data.progress) throw toApiError(res, data, "تعذر إعادة الدرس");
+  return data as { ok: true; round: number; progress: ProgressRecord };
+}
+
 /* ------------------------------ Teacher ------------------------------ */
 
 export function getTeacherPin(): string {
